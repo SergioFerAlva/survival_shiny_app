@@ -43,19 +43,25 @@ server <- function(input, output) {
   output$km_plot <- renderPlot({
 
     if (input$strata == "None") {
+
       fit <- survfit(Surv(time, status) ~ 1, data = lung)
-    } else {
-      formula <- as.formula(paste("Surv(time, status) ~", input$strata))
-      fit <- survfit(formula, data = lung)
+
+    } else if (input$strata == "sex") {
+
+      fit <- survfit(Surv(time, status) ~ sex, data = lung)
+
     }
 
-    survminer::ggsurvplot(
+    p <- survminer::ggsurvplot(
       fit,
       data = lung,
-      risk.table = FALSE,  # temporarily disable
+      risk.table = FALSE,
       pval = TRUE,
       conf.int = TRUE
     )
+
+    print(p$plot)
+
   })
 }
 
