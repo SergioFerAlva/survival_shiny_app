@@ -55,7 +55,11 @@ server <- function(input, output) {
       data = lung,
       risk.table = FALSE,
       pval = input$strata != "None",
-      conf.int = TRUE
+      conf.int = TRUE,
+      xlab = "Time (days)",
+      ylab = "Survival Probability",
+      ggtheme = theme_minimal()
+      
     )
     
     print(p$plot)
