@@ -37,7 +37,14 @@ ui <- fluidPage(
       
       h4("Multivariable Cox Model (Adjusted)"),
       tableOutput("cox_multi_results"),
-      plotOutput("forest_plot")
+      plotOutput("forest_plot"),
+      
+      h3("Proportional Hazards Assumption Test"),
+      tableOutput("ph_test"),
+      verbatimTextOutput("ph_interpretation"),
+      
+      h4("Schoenfeld Residual Diagnostics"),
+      plotOutput("schoenfeld_plot")
     )
   )
 )
@@ -126,6 +133,7 @@ server <- function(input, output) {
     }
     
   })
+  
   # Cox proportional hazards model
   output$cox_results <- renderTable({
     
@@ -152,6 +160,7 @@ server <- function(input, output) {
     
   })
   
+  # Cox interpretation blurb
   output$cox_interpretation <- renderPrint({
     
     if (input$strata != "sex") {
@@ -179,6 +188,7 @@ server <- function(input, output) {
     )
   })
   
+  # Multivariate Cox
   output$cox_multi_results <- renderTable({
     
     if (input$strata != "sex") {
@@ -201,7 +211,8 @@ server <- function(input, output) {
     )
   })
   
-  output$forest_plot <- renderPlot({
+  # Forest plot
+    output$forest_plot <- renderPlot({
     
     if (input$strata != "sex") {
       return(NULL)
@@ -210,6 +221,68 @@ server <- function(input, output) {
     model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
     
     ggforest(model, data = lung)
+  })
+  
+  # PH Test Table
+  output$ph_test <- renderTable({
+    
+    if (input$strata != "sex") {
+      return(NULL)
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    
+    ph_test <- cox.zph(model)
+    
+    data.frame(
+      Variable = rownames(ph_test$table),
+      Chi_Square = round(ph_test$table[, "chisq"], 3),
+      P_Value = signif(ph_test$table[, "p"], 3)
+    )
+  })
+  
+  # Schoenfeld residual plots
+  output$schoenfeld_plot <- renderPlot({
+    
+    if (input$strata != "sex") {
+      return(NULL)
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    ph_test <- cox.zph(model)
+    
+    plot(ph_test)
+  })
+  
+  # PH interpretation
+  output$ph_interpretation <- renderPrint({
+    
+    if (input$strata != "sex") {
+      return(NULL)
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    ph_test <- cox.zph(model)
+    
+    pvals <- ph_test$table[, "p"]
+    global_p <- pvals[length(pvals)]
+    
+    if (global_p < 0.05) {
+      cat(
+        "Interpretation:\n\n",
+        "The global Schoenfeld test indicates a violation of the proportional hazards assumption",
+        "(p =", signif(global_p,3), ").\n",
+        "This suggests that at least one covariate may have time-dependent effects.",
+        "Inspection of the Schoenfeld residual plots is recommended to identify which variable violates the assumption."
+      )
+    } else {
+      cat(
+        "Interpretation:\n\n",
+        "The global Schoenfeld test does not indicate violation of the proportional hazards assumption",
+        "(p =", signif(global_p,3), ").\n",
+        "The proportional hazards assumption appears to be satisfied for this Cox model."
+      )
+    }
   })
   
   }
