@@ -29,7 +29,15 @@ ui <- fluidPage(
       tableOutput("surv_stats"),
       
       h3("Kaplan-Meier Curve"),
-      plotOutput("km_plot")
+      plotOutput("km_plot"),
+      
+      h3("Cox Proportional Hazards Model"),
+      tableOutput("cox_results"),
+      verbatimTextOutput("cox_interpretation"),
+      
+      h4("Multivariable Cox Model (Adjusted)"),
+      tableOutput("cox_multi_results"),
+      plotOutput("forest_plot")
     )
   )
 )
@@ -118,6 +126,92 @@ server <- function(input, output) {
     }
     
   })
+  # Cox proportional hazards model
+  output$cox_results <- renderTable({
+    
+    if (input$strata != "sex") {
+      return(data.frame(
+        Message = "Cox model available when stratifying by sex."
+      ))
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex, data = lung)
+    model_summary <- summary(model)
+    
+    hr <- model_summary$coefficients[,"exp(coef)"]
+    lower_ci <- model_summary$conf.int[,"lower .95"]
+    upper_ci <- model_summary$conf.int[,"upper .95"]
+    p_value <- model_summary$coefficients[,"Pr(>|z|)"]
+    
+    data.frame(
+      Variable = "Female vs Male",
+      Hazard_Ratio = round(hr, 3),
+      CI_95 = paste0(round(lower_ci,3), " - ", round(upper_ci,3)),
+      P_Value = signif(p_value, 3)
+    )
+    
+  })
+  
+  output$cox_interpretation <- renderPrint({
+    
+    if (input$strata != "sex") {
+      return(NULL)
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex, data = lung)
+    model_summary <- summary(model)
+    
+    hr <- model_summary$coefficients[,"exp(coef)"]
+    p_value <- model_summary$coefficients[,"Pr(>|z|)"]
+    
+    if (p_value < 0.05) {
+      significance <- "statistically significant"
+    } else {
+      significance <- "not statistically significant"
+    }
+    
+    cat(
+      "Interpretation:\n\n",
+      "Female patients have a hazard ratio of", round(hr,3),
+      "relative to male patients.\n",
+      "This difference is", significance,
+      "(p =", signif(p_value,3), ")."
+    )
+  })
+  
+  output$cox_multi_results <- renderTable({
+    
+    if (input$strata != "sex") {
+      return(NULL)
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    summary_model <- summary(model)
+    
+    hr <- summary_model$coefficients[, "exp(coef)"]
+    lower <- summary_model$conf.int[, "lower .95"]
+    upper <- summary_model$conf.int[, "upper .95"]
+    pval <- summary_model$coefficients[, "Pr(>|z|)"]
+    
+    data.frame(
+      Variable = rownames(summary_model$coefficients),
+      Hazard_Ratio = round(hr, 3),
+      CI_95 = paste0(round(lower,3), " - ", round(upper,3)),
+      P_Value = signif(pval, 3)
+    )
+  })
+  
+  output$forest_plot <- renderPlot({
+    
+    if (input$strata != "sex") {
+      return(NULL)
+    }
+    
+    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    
+    ggforest(model, data = lung)
+  })
+  
   }
 
 shinyApp(ui = ui, server = server)
