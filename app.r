@@ -1,30 +1,69 @@
+###############################################################
+# Interactive Survival Explorer
+# Bioinformatics / Biostatistics Shiny portfolio project
+###############################################################
+
 library(shiny)
 library(survival)
 library(survminer)
 library(dplyr)
 
-# Load dataset safely
+###############################################################
+# DEFAULT DATASET
+###############################################################
+
+# Load lung dataset from survival package
 lung <- survival::lung
 
-# Clean data
+# Clean variables
 lung <- lung %>%
   mutate(
-    status = as.numeric(status == 2),
-    sex = factor(sex, labels = c("Male", "Female"))
+    status = as.numeric(status == 2),        # convert event indicator to 1/0
+    sex = factor(sex, labels = c("Male","Female"))
   )
 
+###############################################################
+# USER INTERFACE
+###############################################################
+
 ui <- fluidPage(
+  
   titlePanel("Interactive Survival Explorer"),
   
   sidebarLayout(
+    
+    ###########################################################
+    # SIDEBAR
+    ###########################################################
+    
     sidebarPanel(
-      selectInput("strata",
-                  "Stratify by:",
-                  choices = c("None", "sex"),
-                  selected = "None")
+      
+      # Optional CSV upload
+      fileInput(
+        "file",
+        "Upload CSV dataset",
+        accept = ".csv"
+      ),
+      
+      # Dynamic UI for variable selection
+      uiOutput("var_select"),
+      
+      # Covariate selection for multivariable Cox model
+      selectizeInput(
+        "covariates",
+        "Covariates for multivariable Cox model",
+        choices = NULL,
+        multiple = TRUE
+      )
+      
     ),
     
+    ###########################################################
+    # MAIN PANEL
+    ###########################################################
+    
     mainPanel(
+      
       h3("Descriptive Survival Statistics"),
       tableOutput("surv_stats"),
       
@@ -39,252 +78,427 @@ ui <- fluidPage(
       tableOutput("cox_multi_results"),
       plotOutput("forest_plot"),
       
-      h3("Proportional Hazards Assumption Test"),
+      h4("Proportional Hazards Diagnostics"),
       tableOutput("ph_test"),
-      verbatimTextOutput("ph_interpretation"),
+      plotOutput("ph_plot"),
+      verbatimTextOutput("ph_interpretation")
       
-      h4("Schoenfeld Residual Diagnostics"),
-      plotOutput("schoenfeld_plot")
     )
   )
 )
 
-server <- function(input, output) {
+###############################################################
+# SERVER LOGIC
+###############################################################
+
+server <- function(input, output, session) {
   
-  # Reactive survival model
-  surv_object <- reactive({
-    if (input$strata == "None") {
-      survfit(Surv(time, status) ~ 1, data = lung)
-    } else {
-      survfit(Surv(time, status) ~ sex, data = lung)
+  #############################################################
+  # DATA INPUT
+  #############################################################
+  
+  # Reactive dataset (default = lung)
+  data_input <- reactive({
+    
+    if (is.null(input$file)) {
+      return(lung)
     }
+    
+    read.csv(input$file$datapath)
+    
   })
   
-  # Kaplan-Meier Plot
-  output$km_plot <- renderPlot({
+  
+  #############################################################
+  # VARIABLE SELECTION UI
+  #############################################################
+  
+  output$var_select <- renderUI({
     
-    fit <- surv_object()
+    df <- data_input()
     
-    p <- ggsurvplot(
-      fit,
-      data = lung,
-      risk.table = FALSE,
-      pval = input$strata != "None",
-      conf.int = TRUE,
-      xlab = "Time (days)",
-      ylab = "Survival Probability",
-      ggtheme = theme_minimal()
+    tagList(
+      
+      selectInput(
+        "time_var",
+        "Time variable:",
+        choices = names(df),
+        selected = if("time" %in% names(df)) "time" else names(df)[1]
+      ),
+      
+      selectInput(
+        "event_var",
+        "Event variable (1=event, 0=censored):",
+        choices = names(df),
+        selected = if("status" %in% names(df)) "status" else names(df)[2]
+      ),
+      
+      selectInput(
+        "group_var",
+        "Grouping variable:",
+        choices = c("None", names(df)),
+        selected = "None"
+      )
       
     )
     
-    print(p$plot)
   })
   
-  # Descriptive Survival Statistics
+  
+  #############################################################
+  # UPDATE COVARIATE SELECTION
+  #############################################################
+  
+  observe({
+    
+    df <- data_input()
+    
+    updateSelectizeInput(
+      session,
+      "covariates",
+      choices = setdiff(names(df), c(input$time_var, input$event_var)),
+      server = TRUE
+    )
+    
+  })
+  
+  
+  #############################################################
+  # SURVIVAL OBJECT
+  #############################################################
+  
+  # Build survival model using standardized column names
+  surv_object <- reactive({
+    
+    df <- data_input()
+    
+    req(input$time_var, input$event_var)
+    
+    # create standardized variables to avoid NSE problems
+    df$.time  <- df[[input$time_var]]
+    df$.event <- df[[input$event_var]]
+    
+    if (input$group_var == "None") {
+      
+      fit <- survfit(Surv(.time, .event) ~ 1, data = df)
+      
+    } else {
+      
+      df$.group <- as.factor(df[[input$group_var]])
+      fit <- survfit(Surv(.time, .event) ~ .group, data = df)
+      
+    }
+    
+    list(fit = fit, data = df)
+    
+  })
+  
+  
+  #############################################################
+  # KAPLAN-MEIER CURVE
+  #############################################################
+  
+  output$km_plot <- renderPlot({
+    
+    obj <- surv_object()
+    
+    p <- ggsurvplot(
+      obj$fit,
+      data = obj$data,
+      conf.int = TRUE,
+      pval = input$group_var != "None",
+      risk.table = FALSE,
+      xlab = "Time",
+      ylab = "Survival Probability",
+      ggtheme = theme_minimal()
+    )
+    
+    print(p)
+    
+  })
+  
+  
+  #############################################################
+  # DESCRIPTIVE SURVIVAL STATISTICS
+  #############################################################
+  
   output$surv_stats <- renderTable({
     
-    fit <- surv_object()
+    obj <- surv_object()
+    fit <- obj$fit
+    df  <- obj$data
     
-    # Get summary table
     fit_table <- summary(fit)$table
     
-    # ---- CASE 1: No stratification (vector) ----
+    # Case: no stratification
     if (is.null(dim(fit_table))) {
       
-      total_n <- nrow(lung)
-      total_events <- sum(lung$status)
+      total_n <- nrow(df)
+      total_events <- sum(df$.event)
       
       med <- as.numeric(fit_table["median"])
-      
       surv_365 <- summary(fit, times = 365, extend = TRUE)$surv[1]
       
       data.frame(
         Group = "Overall",
         Total_Patients = total_n,
         Events = total_events,
-        Event_Rate_Percent = round(100 * total_events / total_n, 1),
-        Median_Survival_Time = round(med, 1),
-        Survival_Probability_365_Days = round(surv_365, 3)
+        Event_Rate_Percent = round(100 * total_events / total_n,1),
+        Median_Survival_Time = round(med,1),
+        Survival_Probability_365_Days = round(surv_365,3)
       )
       
     } else {
-      
-      # ---- CASE 2: Stratified (matrix) ----
-      
-      summary_df <- lung %>%
-        group_by(sex) %>%
-        summarise(
-          Total_Patients = n(),
-          Events = sum(status),
-          .groups = "drop"
-        )
       
       med <- as.numeric(fit_table[, "median"])
       surv_365 <- summary(fit, times = 365, extend = TRUE)$surv
       
-      summary_df$Event_Rate_Percent <- round(
-        100 * summary_df$Events / summary_df$Total_Patients, 1
+      data.frame(
+        Group = rownames(fit_table),
+        Median_Survival_Time = round(med,1),
+        Survival_Probability_365_Days = round(surv_365,3)
       )
       
-      summary_df$Median_Survival_Time <- round(med, 1)
-      summary_df$Survival_Probability_365_Days <- round(surv_365, 3)
-      
-      summary_df
     }
     
   })
   
-  # Cox proportional hazards model
+  
+  #############################################################
+  # UNIVARIATE COX MODEL
+  #############################################################
+  
   output$cox_results <- renderTable({
     
-    if (input$strata != "sex") {
+    if (input$group_var == "None") {
       return(data.frame(
-        Message = "Cox model available when stratifying by sex."
+        Message = "Select a grouping variable to run Cox regression."
       ))
     }
     
-    model <- coxph(Surv(time, status) ~ sex, data = lung)
-    model_summary <- summary(model)
+    obj <- surv_object()
+    df  <- obj$data
     
-    hr <- model_summary$coefficients[,"exp(coef)"]
-    lower_ci <- model_summary$conf.int[,"lower .95"]
-    upper_ci <- model_summary$conf.int[,"upper .95"]
-    p_value <- model_summary$coefficients[,"Pr(>|z|)"]
+    model <- coxph(Surv(.time, .event) ~ .group, data = df)
+    
+    s <- summary(model)
     
     data.frame(
-      Variable = "Female vs Male",
-      Hazard_Ratio = round(hr, 3),
-      CI_95 = paste0(round(lower_ci,3), " - ", round(upper_ci,3)),
-      P_Value = signif(p_value, 3)
+      Variable = rownames(s$coefficients),
+      Hazard_Ratio = round(s$coefficients[,"exp(coef)"],3),
+      CI_95 = paste0(
+        round(s$conf.int[,"lower .95"],3),
+        " - ",
+        round(s$conf.int[,"upper .95"],3)
+      ),
+      P_Value = signif(s$coefficients[,"Pr(>|z|)"],3)
     )
     
   })
   
-  # Cox interpretation blurb
+  
+  #############################################################
+  # COX MODEL INTERPRETATION
+  #############################################################
+  
   output$cox_interpretation <- renderPrint({
     
-    if (input$strata != "sex") {
-      return(NULL)
-    }
+    if (input$group_var == "None") return(NULL)
     
-    model <- coxph(Surv(time, status) ~ sex, data = lung)
-    model_summary <- summary(model)
+    obj <- surv_object()
+    df  <- obj$data
     
-    hr <- model_summary$coefficients[,"exp(coef)"]
-    p_value <- model_summary$coefficients[,"Pr(>|z|)"]
+    model <- coxph(Surv(.time, .event) ~ .group, data = df)
     
-    if (p_value < 0.05) {
-      significance <- "statistically significant"
-    } else {
-      significance <- "not statistically significant"
-    }
+    s <- summary(model)
+    
+    hr <- s$coefficients[,"exp(coef)"]
+    p  <- s$coefficients[,"Pr(>|z|)"]
+    
+    variable <- gsub(".group","",rownames(s$coefficients), fixed = TRUE)
+    
+    significance <- ifelse(
+      p < 0.05,
+      "statistically significant",
+      "not statistically significant"
+    )
     
     cat(
       "Interpretation:\n\n",
-      "Female patients have a hazard ratio of", round(hr,3),
-      "relative to male patients.\n",
-      "This difference is", significance,
-      "(p =", signif(p_value,3), ")."
+      variable,
+      "has a hazard ratio of",
+      round(hr,3),
+      "relative to the reference group.\n",
+      "This effect is",
+      significance,
+      "(p =", signif(p,3), ")."
     )
+    
   })
   
-  # Multivariate Cox
+  
+  #############################################################
+  # MULTIVARIABLE COX MODEL
+  #############################################################
+  
   output$cox_multi_results <- renderTable({
     
-    if (input$strata != "sex") {
-      return(NULL)
-    }
+    if (input$group_var == "None") return(NULL)
+    if (length(input$covariates) == 0) return(NULL)
     
-    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
-    summary_model <- summary(model)
+    obj <- surv_object()
+    df  <- obj$data
     
-    hr <- summary_model$coefficients[, "exp(coef)"]
-    lower <- summary_model$conf.int[, "lower .95"]
-    upper <- summary_model$conf.int[, "upper .95"]
-    pval <- summary_model$coefficients[, "Pr(>|z|)"]
+    formula_str <- paste(
+      "Surv(.time, .event) ~ .group +",
+      paste(input$covariates, collapse = " + ")
+    )
+    
+    model <- coxph(as.formula(formula_str), data = df)
+    
+    s <- summary(model)
     
     data.frame(
-      Variable = rownames(summary_model$coefficients),
-      Hazard_Ratio = round(hr, 3),
-      CI_95 = paste0(round(lower,3), " - ", round(upper,3)),
-      P_Value = signif(pval, 3)
+      Variable = rownames(s$coefficients),
+      Hazard_Ratio = round(s$coefficients[,"exp(coef)"],3),
+      CI_95 = paste0(
+        round(s$conf.int[,"lower .95"],3),
+        " - ",
+        round(s$conf.int[,"upper .95"],3)
+      ),
+      P_Value = signif(s$coefficients[,"Pr(>|z|)"],3)
     )
+    
   })
   
-  # Forest plot
-    output$forest_plot <- renderPlot({
+  
+  #############################################################
+  # FOREST PLOT
+  #############################################################
+  
+  output$forest_plot <- renderPlot({
     
-    if (input$strata != "sex") {
-      return(NULL)
-    }
+    if (input$group_var == "None") return(NULL)
+    if (length(input$covariates) == 0) return(NULL)
     
-    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    obj <- surv_object()
+    df  <- obj$data
     
-    ggforest(model, data = lung)
+    formula_str <- paste(
+      "Surv(.time, .event) ~ .group +",
+      paste(input$covariates, collapse = " + ")
+    )
+    
+    model <- coxph(as.formula(formula_str), data = df)
+    
+    ggforest(model, data = df)
+    
   })
   
-  # PH Test Table
+  
+  #############################################################
+  # PROPORTIONAL HAZARDS TEST
+  #############################################################
+  
   output$ph_test <- renderTable({
     
-    if (input$strata != "sex") {
-      return(NULL)
-    }
+    if (input$group_var == "None") return(NULL)
+    if (length(input$covariates) == 0) return(NULL)
     
-    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
+    obj <- surv_object()
+    df  <- obj$data
     
-    ph_test <- cox.zph(model)
+    formula_str <- paste(
+      "Surv(.time, .event) ~ .group +",
+      paste(input$covariates, collapse = " + ")
+    )
+    
+    model <- coxph(as.formula(formula_str), data = df)
+    
+    ph <- cox.zph(model)
     
     data.frame(
-      Variable = rownames(ph_test$table),
-      Chi_Square = round(ph_test$table[, "chisq"], 3),
-      P_Value = signif(ph_test$table[, "p"], 3)
+      Variable = rownames(ph$table),
+      Chi_Square = round(ph$table[,"chisq"],3),
+      P_Value = signif(ph$table[,"p"],3)
     )
+    
   })
   
-  # Schoenfeld residual plots
-  output$schoenfeld_plot <- renderPlot({
+  
+  #############################################################
+  # SCHOENFELD RESIDUAL PLOTS
+  #############################################################
+  
+  output$ph_plot <- renderPlot({
     
-    if (input$strata != "sex") {
-      return(NULL)
-    }
+    if (input$group_var == "None") return(NULL)
+    if (length(input$covariates) == 0) return(NULL)
     
-    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
-    ph_test <- cox.zph(model)
+    obj <- surv_object()
+    df  <- obj$data
     
-    plot(ph_test)
+    formula_str <- paste(
+      "Surv(.time, .event) ~ .group +",
+      paste(input$covariates, collapse = " + ")
+    )
+    
+    model <- coxph(as.formula(formula_str), data = df)
+    
+    ph <- cox.zph(model)
+    
+    plot(ph)
+    
   })
   
-  # PH interpretation
+  
+  #############################################################
+  # PH INTERPRETATION
+  #############################################################
+  
   output$ph_interpretation <- renderPrint({
     
-    if (input$strata != "sex") {
-      return(NULL)
-    }
+    if (input$group_var == "None") return(NULL)
+    if (length(input$covariates) == 0) return(NULL)
     
-    model <- coxph(Surv(time, status) ~ sex + age + ph.ecog, data = lung)
-    ph_test <- cox.zph(model)
+    obj <- surv_object()
+    df  <- obj$data
     
-    pvals <- ph_test$table[, "p"]
-    global_p <- pvals[length(pvals)]
+    formula_str <- paste(
+      "Surv(.time, .event) ~ .group +",
+      paste(input$covariates, collapse = " + ")
+    )
     
-    if (global_p < 0.05) {
+    model <- coxph(as.formula(formula_str), data = df)
+    
+    ph <- cox.zph(model)
+    
+    global_p <- ph$table[nrow(ph$table),"p"]
+    
+    if(global_p < 0.05){
+      
       cat(
-        "Interpretation:\n\n",
-        "The global Schoenfeld test indicates a violation of the proportional hazards assumption",
-        "(p =", signif(global_p,3), ").\n",
-        "This suggests that at least one covariate may have time-dependent effects.",
-        "Inspection of the Schoenfeld residual plots is recommended to identify which variable violates the assumption."
+        "Global PH test p-value:",
+        signif(global_p,3),
+        "\nThe proportional hazards assumption may be violated."
       )
+      
     } else {
+      
       cat(
-        "Interpretation:\n\n",
-        "The global Schoenfeld test does not indicate violation of the proportional hazards assumption",
-        "(p =", signif(global_p,3), ").\n",
-        "The proportional hazards assumption appears to be satisfied for this Cox model."
+        "Global PH test p-value:",
+        signif(global_p,3),
+        "\nNo evidence against the proportional hazards assumption."
       )
+      
     }
+    
   })
   
-  }
+}
+
+###############################################################
+# RUN APP
+###############################################################
 
 shinyApp(ui = ui, server = server)
