@@ -1,25 +1,33 @@
 ###############################################################
 # Interactive Survival Explorer
-# Bioinformatics / Biostatistics Shiny portfolio project
+# Biostatistics / Bioinformatics Portfolio App
 ###############################################################
 
 library(shiny)
 library(survival)
 library(survminer)
 library(dplyr)
+library(ggplot2)
+library(bslib)
 
 ###############################################################
-# DEFAULT DATASET
+# EXAMPLE DATASETS
 ###############################################################
 
-# Load lung dataset from survival package
-lung <- survival::lung
-
-# Clean variables
-lung <- lung %>%
+lung <- survival::lung %>%
   mutate(
-    status = as.numeric(status == 2),        # convert event indicator to 1/0
+    status = as.numeric(status == 2),
     sex = factor(sex, labels = c("Male","Female"))
+  )
+
+pbc <- survival::pbc %>%
+  mutate(
+    status = as.numeric(status == 2)
+  )
+
+veteran <- survival::veteran %>%
+  mutate(
+    status = as.numeric(status == 1)
   )
 
 ###############################################################
@@ -28,94 +36,160 @@ lung <- lung %>%
 
 ui <- fluidPage(
   
+  theme = bs_theme(version = 5, bootswatch = "flatly"),
+  
   titlePanel("Interactive Survival Explorer"),
   
   sidebarLayout(
     
-    ###########################################################
-    # SIDEBAR
-    ###########################################################
-    
     sidebarPanel(
       
-      # Optional CSV upload
+      h4("Dataset"),
+      
+      selectInput(
+        "dataset",
+        "Choose example dataset",
+        choices = c("Lung","PBC","Veteran")
+      ),
+      
       fileInput(
         "file",
         "Upload CSV dataset",
         accept = ".csv"
       ),
       
-      # Dynamic UI for variable selection
+      hr(),
+      
+      h4("Variables"),
+      
       uiOutput("var_select"),
       
-      # Covariate selection for multivariable Cox model
       selectizeInput(
         "covariates",
         "Covariates for multivariable Cox model",
         choices = NULL,
         multiple = TRUE
-      )
+      ),
+      
+      hr(),
+      
+      h4("Plot Options"),
+      
+      checkboxInput("show_ci","Show confidence interval", TRUE),
+      checkboxInput("risk_table","Show risk table", TRUE),
+      
+      hr(),
+      
+      downloadButton("download_cox","Download Cox Results"),
+      downloadButton("download_km","Download KM Plot")
       
     ),
     
-    ###########################################################
-    # MAIN PANEL
-    ###########################################################
-    
     mainPanel(
       
-      h3("Descriptive Survival Statistics"),
-      tableOutput("surv_stats"),
-      
-      h3("Kaplan-Meier Curve"),
-      plotOutput("km_plot"),
-      
-      h3("Cox Proportional Hazards Model"),
-      tableOutput("cox_results"),
-      verbatimTextOutput("cox_interpretation"),
-      
-      h4("Multivariable Cox Model (Adjusted)"),
-      tableOutput("cox_multi_results"),
-      plotOutput("forest_plot"),
-      
-      h4("Proportional Hazards Diagnostics"),
-      tableOutput("ph_test"),
-      plotOutput("ph_plot"),
-      verbatimTextOutput("ph_interpretation")
-      
+      tabsetPanel(
+        
+        tabPanel(
+          "Summary",
+          
+          h3("Dataset Summary"),
+          tableOutput("dataset_summary"),
+          
+          h3("Descriptive Survival Statistics"),
+          tableOutput("surv_stats"),
+          
+          h3("Log-Rank Test"),
+          tableOutput("logrank_test")
+          
+        ),
+        
+        tabPanel(
+          "Kaplan-Meier",
+          
+          plotOutput("km_plot")
+          
+        ),
+        
+        tabPanel(
+          "Cox Model",
+          
+          h3("Univariate Cox Model"),
+          tableOutput("cox_results"),
+          verbatimTextOutput("cox_interpretation"),
+          
+          h3("Multivariable Cox Model"),
+          tableOutput("cox_multi_results"),
+          
+          h3("Forest Plot"),
+          plotOutput("forest_plot"),
+          
+          h3("Model Performance"),
+          tableOutput("model_performance")
+          
+        ),
+        
+        tabPanel(
+          "Diagnostics",
+          
+          h3("Proportional Hazards Test"),
+          tableOutput("ph_test"),
+          
+          plotOutput("ph_plot"),
+          
+          verbatimTextOutput("ph_interpretation")
+          
+        ),
+        
+        tabPanel(
+          "Methods",
+          
+          h3("Statistical Methods"),
+          
+          tags$ul(
+            tags$li("Kaplan-Meier survival estimation"),
+            tags$li("Log-rank test for group comparison"),
+            tags$li("Cox proportional hazards regression"),
+            tags$li("Proportional hazards assumption testing")
+          )
+          
+        )
+      )
     )
   )
 )
 
 ###############################################################
-# SERVER LOGIC
+# SERVER
 ###############################################################
 
 server <- function(input, output, session) {
   
-  #############################################################
+  ###############################################################
   # DATA INPUT
-  #############################################################
+  ###############################################################
   
-  # Reactive dataset (default = lung)
   data_input <- reactive({
     
-    if (is.null(input$file)) {
-      return(lung)
+    if(!is.null(input$file)){
+      return(read.csv(input$file$datapath))
     }
     
-    read.csv(input$file$datapath)
+    if(input$dataset == "Lung") return(lung)
+    if(input$dataset == "PBC") return(pbc)
+    if(input$dataset == "Veteran") return(veteran)
     
   })
   
-  
-  #############################################################
-  # VARIABLE SELECTION UI
-  #############################################################
+  ###############################################################
+  # VARIABLE SELECTION
+  ###############################################################
   
   output$var_select <- renderUI({
     
     df <- data_input()
+    
+    time_default <- if("time" %in% names(df)) "time" else names(df)[1]
+    event_default <- if("status" %in% names(df)) "status" else names(df)[2]
     
     tagList(
       
@@ -123,14 +197,14 @@ server <- function(input, output, session) {
         "time_var",
         "Time variable:",
         choices = names(df),
-        selected = if("time" %in% names(df)) "time" else names(df)[1]
+        selected = time_default
       ),
       
       selectInput(
         "event_var",
-        "Event variable (1=event, 0=censored):",
+        "Event variable:",
         choices = names(df),
-        selected = if("status" %in% names(df)) "status" else names(df)[2]
+        selected = event_default
       ),
       
       selectInput(
@@ -144,59 +218,127 @@ server <- function(input, output, session) {
     
   })
   
-  
-  #############################################################
-  # UPDATE COVARIATE SELECTION
-  #############################################################
+  ###############################################################
+  # UPDATE COVARIATES
+  ###############################################################
   
   observe({
     
     df <- data_input()
     
+    covars <- setdiff(names(df), c(input$time_var, input$event_var))
+    
     updateSelectizeInput(
       session,
       "covariates",
-      choices = setdiff(names(df), c(input$time_var, input$event_var)),
+      choices = covars,
       server = TRUE
     )
     
   })
   
-  
-  #############################################################
+  ###############################################################
   # SURVIVAL OBJECT
-  #############################################################
+  ###############################################################
   
-  # Build survival model using standardized column names
   surv_object <- reactive({
     
     df <- data_input()
     
-    req(input$time_var, input$event_var)
-    
-    # create standardized variables to avoid NSE problems
-    df$.time  <- df[[input$time_var]]
+    df$.time <- df[[input$time_var]]
     df$.event <- df[[input$event_var]]
     
-    if (input$group_var == "None") {
+    if(input$group_var != "None"){
       
-      fit <- survfit(Surv(.time, .event) ~ 1, data = df)
+      df$.group <- as.factor(df[[input$group_var]])
+      fit <- survfit(Surv(.time,.event)~.group,data=df)
       
     } else {
       
-      df$.group <- as.factor(df[[input$group_var]])
-      fit <- survfit(Surv(.time, .event) ~ .group, data = df)
+      fit <- survfit(Surv(.time,.event)~1,data=df)
       
     }
     
-    list(fit = fit, data = df)
+    list(fit=fit,data=df)
     
   })
   
+  ###############################################################
+  # DATASET SUMMARY
+  ###############################################################
   
-  #############################################################
-  # KAPLAN-MEIER CURVE
-  #############################################################
+  output$dataset_summary <- renderTable({
+    
+    df <- data_input()
+    
+    data.frame(
+      Total_Patients = nrow(df),
+      Variables = ncol(df),
+      Missing_Values = sum(is.na(df))
+    )
+    
+  })
+  
+  ###############################################################
+  # SURVIVAL STATISTICS (GROUP SAFE)
+  ###############################################################
+  
+  output$surv_stats <- renderTable({
+    
+    obj <- surv_object()
+    fit <- obj$fit
+    
+    med <- summary(fit)$table
+    
+    surv_times <- summary(fit, times=c(365,1095,1825), extend=TRUE)
+    
+    if(is.null(dim(med))){
+      
+      data.frame(
+        Group="Overall",
+        Median_Survival=round(med["median"],1),
+        Survival_1yr=round(surv_times$surv[1],3),
+        Survival_3yr=round(surv_times$surv[2],3),
+        Survival_5yr=round(surv_times$surv[3],3)
+      )
+      
+    } else {
+      
+      data.frame(
+        Group=rownames(med),
+        Median_Survival=round(med[,"median"],1)
+      )
+      
+    }
+    
+  })
+  
+  ###############################################################
+  # LOG-RANK TEST
+  ###############################################################
+  
+  output$logrank_test <- renderTable({
+    
+    if(input$group_var=="None") return(NULL)
+    
+    df <- data_input()
+    
+    df$.time <- df[[input$time_var]]
+    df$.event <- df[[input$event_var]]
+    df$.group <- as.factor(df[[input$group_var]])
+    
+    lr <- survdiff(Surv(.time,.event)~.group,data=df)
+    
+    data.frame(
+      Chi_Square = round(lr$chisq,3),
+      P_Value = signif(pchisq(lr$chisq,length(lr$n)-1,lower.tail=FALSE),3)
+    )
+    
+  })
+  
+  ###############################################################
+  # KM PLOT
+  ###############################################################
   
   output$km_plot <- renderPlot({
     
@@ -204,116 +346,56 @@ server <- function(input, output, session) {
     
     p <- ggsurvplot(
       obj$fit,
-      data = obj$data,
-      conf.int = TRUE,
-      pval = input$group_var != "None",
-      risk.table = FALSE,
-      xlab = "Time",
-      ylab = "Survival Probability",
-      ggtheme = theme_minimal()
+      data=obj$data,
+      conf.int=input$show_ci,
+      risk.table=input$risk_table,
+      ggtheme=theme_minimal()
     )
     
     print(p)
     
   })
   
-  
-  #############################################################
-  # DESCRIPTIVE SURVIVAL STATISTICS
-  #############################################################
-  
-  output$surv_stats <- renderTable({
-    
-    obj <- surv_object()
-    fit <- obj$fit
-    df  <- obj$data
-    
-    fit_table <- summary(fit)$table
-    
-    # Case: no stratification
-    if (is.null(dim(fit_table))) {
-      
-      total_n <- nrow(df)
-      total_events <- sum(df$.event)
-      
-      med <- as.numeric(fit_table["median"])
-      surv_365 <- summary(fit, times = 365, extend = TRUE)$surv[1]
-      
-      data.frame(
-        Group = "Overall",
-        Total_Patients = total_n,
-        Events = total_events,
-        Event_Rate_Percent = round(100 * total_events / total_n,1),
-        Median_Survival_Time = round(med,1),
-        Survival_Probability_365_Days = round(surv_365,3)
-      )
-      
-    } else {
-      
-      med <- as.numeric(fit_table[, "median"])
-      surv_365 <- summary(fit, times = 365, extend = TRUE)$surv
-      
-      data.frame(
-        Group = rownames(fit_table),
-        Median_Survival_Time = round(med,1),
-        Survival_Probability_365_Days = round(surv_365,3)
-      )
-      
-    }
-    
-  })
-  
-  
-  #############################################################
-  # UNIVARIATE COX MODEL
-  #############################################################
+  ###############################################################
+  # COX MODEL
+  ###############################################################
   
   output$cox_results <- renderTable({
     
-    if (input$group_var == "None") {
-      return(data.frame(
-        Message = "Select a grouping variable to run Cox regression."
-      ))
-    }
+    if(input$group_var=="None") return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
-    model <- coxph(Surv(.time, .event) ~ .group, data = df)
+    model <- coxph(Surv(.time,.event)~.group,data=obj$data)
     
     s <- summary(model)
     
     data.frame(
-      Variable = rownames(s$coefficients),
-      Hazard_Ratio = round(s$coefficients[,"exp(coef)"],3),
-      CI_95 = paste0(
-        round(s$conf.int[,"lower .95"],3),
-        " - ",
-        round(s$conf.int[,"upper .95"],3)
-      ),
-      P_Value = signif(s$coefficients[,"Pr(>|z|)"],3)
+      Variable=rownames(s$coefficients),
+      Hazard_Ratio=round(s$coefficients[,"exp(coef)"],3),
+      CI_Lower=round(s$conf.int[,"lower .95"],3),
+      CI_Upper=round(s$conf.int[,"upper .95"],3),
+      P_Value=signif(s$coefficients[,"Pr(>|z|)"],3)
     )
     
   })
   
-  
-  #############################################################
-  # COX MODEL INTERPRETATION
-  #############################################################
+  ###############################################################
+  # COX INTERPRETATION
+  ###############################################################
   
   output$cox_interpretation <- renderPrint({
     
-    if (input$group_var == "None") return(NULL)
+    if(input$group_var=="None") return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
-    model <- coxph(Surv(.time, .event) ~ .group, data = df)
+    model <- coxph(Surv(.time,.event)~.group,data=obj$data)
     
     s <- summary(model)
     
     hr <- s$coefficients[,"exp(coef)"]
-    p  <- s$coefficients[,"Pr(>|z|)"]
+    p <- s$coefficients[,"Pr(>|z|)"]
     
     variable <- gsub(".group","",rownames(s$coefficients), fixed = TRUE)
     
@@ -328,7 +410,7 @@ server <- function(input, output, session) {
       variable,
       "has a hazard ratio of",
       round(hr,3),
-      "relative to the reference group.\n",
+      "relative to the reference group.\n\n",
       "This effect is",
       significance,
       "(p =", signif(p,3), ")."
@@ -336,114 +418,122 @@ server <- function(input, output, session) {
     
   })
   
-  
-  #############################################################
-  # MULTIVARIABLE COX MODEL
-  #############################################################
+  ###############################################################
+  # MULTIVARIABLE COX
+  ###############################################################
   
   output$cox_multi_results <- renderTable({
     
-    if (input$group_var == "None") return(NULL)
-    if (length(input$covariates) == 0) return(NULL)
+    if(length(input$covariates)==0) return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
     formula_str <- paste(
-      "Surv(.time, .event) ~ .group +",
-      paste(input$covariates, collapse = " + ")
+      "Surv(.time,.event)~",
+      paste(input$covariates,collapse="+")
     )
     
-    model <- coxph(as.formula(formula_str), data = df)
+    model <- coxph(as.formula(formula_str),data=obj$data)
     
     s <- summary(model)
     
     data.frame(
-      Variable = rownames(s$coefficients),
-      Hazard_Ratio = round(s$coefficients[,"exp(coef)"],3),
-      CI_95 = paste0(
-        round(s$conf.int[,"lower .95"],3),
-        " - ",
-        round(s$conf.int[,"upper .95"],3)
-      ),
-      P_Value = signif(s$coefficients[,"Pr(>|z|)"],3)
+      Variable=rownames(s$coefficients),
+      Hazard_Ratio=round(s$coefficients[,"exp(coef)"],3),
+      P_Value=signif(s$coefficients[,"Pr(>|z|)"],3)
     )
     
   })
   
-  
-  #############################################################
+  ###############################################################
   # FOREST PLOT
-  #############################################################
+  ###############################################################
   
   output$forest_plot <- renderPlot({
     
-    if (input$group_var == "None") return(NULL)
-    if (length(input$covariates) == 0) return(NULL)
+    if(length(input$covariates)==0) return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
     formula_str <- paste(
-      "Surv(.time, .event) ~ .group +",
-      paste(input$covariates, collapse = " + ")
+      "Surv(.time,.event)~",
+      paste(input$covariates,collapse="+")
     )
     
-    model <- coxph(as.formula(formula_str), data = df)
+    model <- coxph(as.formula(formula_str),data=obj$data)
     
-    ggforest(model, data = df)
+    ggforest(model,data=obj$data)
     
   })
   
+  ###############################################################
+  # MODEL PERFORMANCE
+  ###############################################################
   
-  #############################################################
-  # PROPORTIONAL HAZARDS TEST
-  #############################################################
+  output$model_performance <- renderTable({
+    
+    if(length(input$covariates)==0) return(NULL)
+    
+    obj <- surv_object()
+    
+    formula_str <- paste(
+      "Surv(.time,.event)~",
+      paste(input$covariates,collapse="+")
+    )
+    
+    model <- coxph(as.formula(formula_str),data=obj$data)
+    
+    s <- summary(model)
+    
+    data.frame(
+      C_Index = round(s$concordance[1],3),
+      Likelihood_Ratio_p = signif(s$logtest["pvalue"],3)
+    )
+    
+  })
+  
+  ###############################################################
+  # PH TEST
+  ###############################################################
   
   output$ph_test <- renderTable({
     
-    if (input$group_var == "None") return(NULL)
-    if (length(input$covariates) == 0) return(NULL)
+    if(length(input$covariates)==0) return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
     formula_str <- paste(
-      "Surv(.time, .event) ~ .group +",
-      paste(input$covariates, collapse = " + ")
+      "Surv(.time,.event)~",
+      paste(input$covariates,collapse="+")
     )
     
-    model <- coxph(as.formula(formula_str), data = df)
+    model <- coxph(as.formula(formula_str),data=obj$data)
     
     ph <- cox.zph(model)
     
     data.frame(
-      Variable = rownames(ph$table),
-      Chi_Square = round(ph$table[,"chisq"],3),
-      P_Value = signif(ph$table[,"p"],3)
+      Variable=rownames(ph$table),
+      P_Value=signif(ph$table[,"p"],3)
     )
     
   })
   
-  
-  #############################################################
-  # SCHOENFELD RESIDUAL PLOTS
-  #############################################################
+  ###############################################################
+  # PH PLOT
+  ###############################################################
   
   output$ph_plot <- renderPlot({
     
-    if (input$group_var == "None") return(NULL)
-    if (length(input$covariates) == 0) return(NULL)
+    if(length(input$covariates)==0) return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
     formula_str <- paste(
-      "Surv(.time, .event) ~ .group +",
-      paste(input$covariates, collapse = " + ")
+      "Surv(.time,.event)~",
+      paste(input$covariates,collapse="+")
     )
     
-    model <- coxph(as.formula(formula_str), data = df)
+    model <- coxph(as.formula(formula_str),data=obj$data)
     
     ph <- cox.zph(model)
     
@@ -451,46 +541,31 @@ server <- function(input, output, session) {
     
   })
   
-  
-  #############################################################
+  ###############################################################
   # PH INTERPRETATION
-  #############################################################
+  ###############################################################
   
   output$ph_interpretation <- renderPrint({
     
-    if (input$group_var == "None") return(NULL)
-    if (length(input$covariates) == 0) return(NULL)
+    if(length(input$covariates)==0) return(NULL)
     
     obj <- surv_object()
-    df  <- obj$data
     
     formula_str <- paste(
-      "Surv(.time, .event) ~ .group +",
-      paste(input$covariates, collapse = " + ")
+      "Surv(.time,.event)~",
+      paste(input$covariates,collapse="+")
     )
     
-    model <- coxph(as.formula(formula_str), data = df)
+    model <- coxph(as.formula(formula_str),data=obj$data)
     
     ph <- cox.zph(model)
     
-    global_p <- ph$table[nrow(ph$table),"p"]
+    p <- ph$table[nrow(ph$table),"p"]
     
-    if(global_p < 0.05){
-      
-      cat(
-        "Global PH test p-value:",
-        signif(global_p,3),
-        "\nThe proportional hazards assumption may be violated."
-      )
-      
+    if(p < 0.05){
+      cat("Possible violation of proportional hazards assumption.")
     } else {
-      
-      cat(
-        "Global PH test p-value:",
-        signif(global_p,3),
-        "\nNo evidence against the proportional hazards assumption."
-      )
-      
+      cat("No evidence of PH violation.")
     }
     
   })
@@ -501,4 +576,4 @@ server <- function(input, output, session) {
 # RUN APP
 ###############################################################
 
-shinyApp(ui = ui, server = server)
+shinyApp(ui=ui,server=server)
