@@ -1,103 +1,152 @@
 # Interactive Survival Explorer
 
-A Shiny application for interactive survival analysis using Kaplan–Meier estimation and Cox proportional hazards modeling.
+An interactive **Shiny application for survival analysis** using Kaplan–Meier estimation and Cox proportional hazards modeling.
 
-This project demonstrates how statistical survival models can be explored interactively using **R**, **Shiny**, and the **survival** ecosystem. It is designed as a portfolio project for **bioinformatics and biostatistics workflows**.
+This project demonstrates how statistical survival methods commonly used in **biostatistics, clinical research, and bioinformatics** can be explored through an interactive dashboard built with **R**, **Shiny**, and the **survival analysis ecosystem**.
 
----
-
-## Overview
-
-Survival analysis is widely used in biomedical research to model time-to-event outcomes such as patient survival, disease recurrence, or treatment response.
-
-This application allows users to:
-
-* Explore **Kaplan–Meier survival curves**
-* Perform **Cox proportional hazards regression**
-* Fit **multivariable survival models**
-* Visualize **hazard ratios with forest plots**
-* Test the **proportional hazards assumption**
-* Upload custom datasets for interactive analysis
-
-The app ships with the `lung` dataset from the **survival** package as an example dataset.
+The goal of this project is to showcase applied statistical modeling, reproducible analysis workflows, and interactive scientific tools suitable for **biostatistics and bioinformatics portfolios**.
 
 ---
 
-## Features
+# Overview
 
-### Kaplan–Meier Survival Analysis
+Survival analysis is widely used in biomedical research to model **time-to-event outcomes**, such as:
 
-* Survival curves with confidence intervals
-* Optional stratification by group
-* Log-rank test p-value
+* patient survival
+* disease recurrence
+* treatment response
+* time to relapse
 
-### Descriptive Survival Statistics
+This application allows users to perform common survival analyses interactively without writing code.
 
-* Total number of patients
-* Number of events
-* Event rate
-* Median survival time
-* Survival probability at 365 days
+Users can:
 
-### Cox Proportional Hazards Models
+* explore Kaplan–Meier survival curves
+* compare groups using the log-rank test
+* fit Cox proportional hazards models
+* visualize hazard ratios with forest plots
+* evaluate model assumptions
+* upload custom datasets for analysis
 
-* Univariate Cox regression
-* Hazard ratios with 95% confidence intervals
-* Automatic interpretation text
+---
 
-### Multivariable Cox Models
+# Features
 
-* User-selectable covariates
-* Forest plot visualization of hazard ratios
-* Adjusted hazard ratios for multiple predictors
+## Kaplan–Meier Survival Analysis
 
-### Proportional Hazards Diagnostics
+* Kaplan–Meier survival curves
+* Optional confidence intervals
+* Risk table visualization
+* Group stratification
+* Log-rank test for survival differences
 
-* `cox.zph()` proportional hazards test
+---
+
+## Descriptive Survival Statistics
+
+The app provides summary statistics including:
+
+* number of patients
+* number of events
+* median survival time
+* survival probabilities at:
+
+  * 1 year
+  * 3 years
+  * 5 years
+
+---
+
+## Cox Proportional Hazards Models
+
+The application supports both **univariate and multivariable Cox regression**.
+
+Features include:
+
+* hazard ratios (HR)
+* 95% confidence intervals
+* p-values
+* automatic interpretation of hazard ratios
+
+---
+
+## Multivariable Cox Models
+
+Users can select multiple covariates to fit adjusted survival models.
+
+The app provides:
+
+* adjusted hazard ratios
+* forest plot visualization
+* model performance metrics including:
+
+  * concordance index (C-index)
+  * likelihood ratio test
+
+---
+
+## Model Diagnostics
+
+The application includes diagnostics for evaluating model assumptions.
+
+These include:
+
+* proportional hazards test (`cox.zph`)
 * Schoenfeld residual plots
-* Global PH assumption interpretation
-
-### Dynamic Dataset Support
-
-* Upload custom CSV datasets
-* Automatically select survival variables
-* Run survival models interactively
+* global interpretation of PH assumption validity
 
 ---
 
-## Example Dataset
+## Interactive Visualization Options
 
-The application uses the `lung` dataset from the **survival** package by default.
+Users can customize survival plots by:
 
-This dataset contains clinical data from lung cancer patients, including:
-
-* survival time
-* censoring status
-* sex
-* age
-* performance scores
-* weight loss
-* calorie intake
+* enabling/disabling confidence intervals
+* toggling risk tables
+* stratifying survival curves by groups
 
 ---
 
-## Technologies Used
+## Dynamic Dataset Support
+
+The application supports both **built-in example datasets** and **user-uploaded data**.
+
+Example datasets included:
+
+* `lung` — lung cancer survival dataset
+* `pbc` — primary biliary cirrhosis dataset
+* `veteran` — veteran lung cancer trial dataset
+
+Users can also upload **custom CSV datasets** and select:
+
+* time variable
+* event indicator
+* grouping variables
+* model covariates
+
+---
+
+# Technologies Used
+
+This project is built using the following R ecosystem tools:
 
 * **R**
 * **Shiny**
 * **survival**
 * **survminer**
 * **dplyr**
+* **ggplot2**
+* **bslib**
 
-These packages provide tools for statistical modeling, visualization, and interactive dashboards.
+These packages provide statistical modeling, visualization, and interactive web application capabilities.
 
 ---
 
-## Installation
+# Installation
 
 Clone the repository:
 
-```bash
+```
 git clone https://github.com/yourusername/interactive-survival-explorer.git
 cd interactive-survival-explorer
 ```
@@ -109,11 +158,13 @@ install.packages(c(
   "shiny",
   "survival",
   "survminer",
-  "dplyr"
+  "dplyr",
+  "ggplot2",
+  "bslib"
 ))
 ```
 
-Run the app:
+Run the application:
 
 ```r
 shiny::runApp()
@@ -121,59 +172,62 @@ shiny::runApp()
 
 ---
 
-## Project Structure
+# Project Structure
 
 ```
 interactive-survival-explorer/
 │
 ├── app.R
-└── README.md
-
+├── README.md
 ```
 
-* **app.R** – main Shiny application
-* **README.md** – project documentation
+* **app.R** — main Shiny application
+* **README.md** — project documentation
 
 ---
 
-## Example Workflow
+# Example Workflow
+
+A typical workflow in the application:
 
 1. Launch the Shiny app
-2. Select time and event variables
-3. Choose a grouping variable for stratified survival analysis
-4. Select covariates for multivariable Cox regression
-5. Examine survival curves, hazard ratios, and PH diagnostics
+2. Select an example dataset or upload a CSV dataset
+3. Choose the survival **time** and **event** variables
+4. Select a **grouping variable** for Kaplan–Meier comparison
+5. Run **Cox proportional hazards regression**
+6. Evaluate model performance and diagnostics
 
 ---
 
-## Applications in Bioinformatics
+# Applications in Bioinformatics and Clinical Research
 
-Survival analysis is frequently used in:
+Survival analysis plays a critical role in many areas of biomedical data science, including:
 
 * cancer genomics
 * biomarker discovery
 * clinical trial analysis
 * treatment response modeling
 * patient risk stratification
+* translational bioinformatics
 
-This project demonstrates how these statistical tools can be deployed in **interactive analytical environments**.
-
----
-
-## Future Improvements
-
-Potential extensions for this project include:
-
-* gene expression survival analysis
-* TCGA-style high/low expression survival comparisons
-* LASSO Cox regression for feature selection
-* downloadable survival reports
-* improved dashboard UI
-* optional example datasets
+This project demonstrates how these statistical tools can be deployed in **interactive analytical environments for exploratory research and reproducible workflows**.
 
 ---
 
-## Author
+# Future Improvements
 
-Sergio Fernández Álvarez
+Potential future extensions include:
+
+* TCGA gene expression survival analysis
+* high vs low gene expression Kaplan–Meier analysis
+* penalized Cox models (LASSO survival)
+* time-dependent covariates
+* downloadable survival analysis reports
+
+---
+
+# Author
+
+**Sergio Fernández Álvarez**
+
 Bioinformatics / Biostatistics portfolio project.
